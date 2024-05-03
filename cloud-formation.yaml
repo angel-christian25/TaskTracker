@@ -1,0 +1,259 @@
+Description: CloudFormation for Task Tracker
+ 
+Parameters:
+  VpcCidrBlock:
+    Description: CIDR block for the VPC
+    Type: String
+    Default: "10.0.0.0/16"
+ 
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidrBlock
+ 
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.1.0/24"
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: "public1"
+ 
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.2.0/24"
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: "public2"
+ 
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.3.0/24"
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: "private1"
+ 
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: "10.0.4.0/24"
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: "private2"
+ 
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+ 
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+ 
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+ 
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+      
+  DevRouteAssos:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1 
+
+  DevRouteAssos2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2  
+ 
+  MyRDSInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBName: "todos"
+      DBInstanceIdentifier: "todos"
+      AllocatedStorage: 20
+      DBInstanceClass: "db.t3.micro"
+      Engine: "postgres"
+      EngineVersion: "16.2"
+      MasterUsername: "postgres"  
+      MasterUserPassword: "postgres" 
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VPCSecurityGroups:
+        - !Ref PrivateSecurityGroup  
+ 
+  PrivateSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for private instances"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref PublicSecurityGroup  
+ 
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for DB"
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+ 
+  FrontendInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: "t3.medium"
+      ImageId: "ami-06f8dce63a6b60467" 
+      KeyName: "vockey"
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeleteOnTermination: 'true'
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref PublicSecurityGroup
+          SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: "Frontend"
+ 
+  BackendInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: "t3.medium"
+      ImageId: "ami-06f8dce63a6b60467" 
+      KeyName: "vockey"
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: 'true'
+          DeleteOnTermination: 'true'
+          DeviceIndex: '0'
+          GroupSet:
+            - !Ref PublicSecurityGroup
+          SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: "Backend"
+ 
+ 
+  PublicSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for public instances"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: "0.0.0.0/0"
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: "0.0.0.0/0"
+ 
+  connectionStringForPG2:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: "connectionStringForPG2"
+      Description: "Connection string for PostgreSQL"
+      SecretString: !Sub |
+        {
+          "connectionStringForPG2": "postgresql://postgres:postgres@${MyRDSInstance.Endpoint.Address}:5432/todos"
+        }
+ 
+  nodemailerPass2:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: "nodemailerPass2"
+      Description: "Password for nodemailer"
+      SecretString: '{"nodemailerPass2": "uybx gssa ooxy kptn"}'
+      
+  # Define the Lambda function
+  MyLambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.handler
+      Role: "arn:aws:iam::975050375077:role/LabRole"  
+      FunctionName: "emailLambda"
+      Code:
+        S3Bucket: email-lambda-new  
+        S3Key: Archive.zip  
+      Runtime: nodejs20.x
+      Timeout: 800  
+ 
+ 
+  
+  # Add SNS topic for CPU utilization alarm
+  CpuUtilizationAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: "CPUUtilizationAlarmTopic"
+ 
+  # Add subscription to the SNS topic 
+  CpuUtilizationAlarmTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      Endpoint: "angelchristian2599@gmail.com"
+      Protocol: "email"
+      TopicArn: !Ref CpuUtilizationAlarmTopic
+ 
+  # Create CloudWatch alarm for CPU utilization
+  CPUUtilizationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Alarm when CPU utilization exceeds 50%"
+      Namespace: "AWS/EC2"
+      MetricName: "CPUUtilization"
+      Dimensions:
+        - Name: "InstanceId"
+          Value: !Ref FrontendInstance
+      Statistic: "Average"
+      Period: "60"  # 1 minute
+      EvaluationPeriods: "1"
+      Threshold: "50"  # 50% utilization
+      ComparisonOperator: "GreaterThanThreshold"
+      AlarmActions:
+        - !Ref CpuUtilizationAlarmTopic
+ 
+  # Create CloudWatch alarm for CPU utilization
+  CPUUtilizationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: "Alarm when CPU utilization exceeds 50%"
+      Namespace: "AWS/EC2"
+      MetricName: "CPUUtilization"
+      Dimensions:
+        - Name: "InstanceId"
+          Value: !Ref BackendInstance
+      Statistic: "Average"
+      Period: "60"  # 1 minute
+      EvaluationPeriods: "1"
+      Threshold: "50"  # 50% utilization
+      ComparisonOperator: "GreaterThanThreshold"
+      AlarmActions:
+        - !Ref CpuUtilizationAlarmTopic
